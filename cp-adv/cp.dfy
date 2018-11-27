@@ -35,13 +35,8 @@ method {:main} Main(ghost env: HostEnvironment?)
   }
   if dstResult {
     print "Destiny File Already Exist Do You Want To Overwrite it?(y or n)\n";
-    var response := HostConstants.ReadLine(env);
-    print response.Length;
-    print "\n";
-    if response.Length != 1 
-    print response[0] != 'y';
-    print "\n";
-    if response.Length != 1 || response[0] != 'y' || response[0] != 'Y' {return;}
+    var response := HostConstants.ReadChar(env);
+    if response != 'y' && response != 'Y' {return;}
   }
   
   var srcSuccess, srcFs := FileStream.Open(src, env);

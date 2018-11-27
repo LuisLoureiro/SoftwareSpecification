@@ -3,3 +3,7 @@ build/
 *.exe
 *.mdb
 *.pdb
+cp-adv/cp.cs
+cp-basic/cp.cs
+compression/compression.cs
+compression/LZSS.cp

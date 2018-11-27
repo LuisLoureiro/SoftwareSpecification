@@ -18,8 +18,9 @@ namespace @__default {
 
     public partial class HostConstants
     {
-        public static void ReadLine(out char[] line) {
-            line = Console.ReadLine().ToCharArray();
+        public static void ReadChar(out char c) {
+            c = Convert.ToChar(Console.Read());
+            Console.WriteLine();
         }
 
         public static void NumCommandLineArgs(out uint n)

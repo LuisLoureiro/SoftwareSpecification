@@ -43,7 +43,8 @@ class HostConstants
     // result of C# System.Environment.GetCommandLineArgs(); argument 0 is name of executable    
     function {:axiom} CommandLineArgs():seq<seq<char>> reads this; 
 
-    static method {:extern} ReadLine(ghost env:HostEnvironment) returns(n:array<char>)
+    static method {:extern} ReadChar(ghost env:HostEnvironment) returns(c:char)
+        requires env.Valid()
 
     static method {:extern} NumCommandLineArgs(ghost env:HostEnvironment) returns(n:uint32)
         requires env.Valid();
