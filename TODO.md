@@ -16,3 +16,18 @@ dafny/dafny assignment2/cp-basic/cp.dfy assignment2/cp-basic/IoNative.cs
 dafny/dafny assignment2/cp-adv/cp.dfy assignment2/cp-adv/IoNative.cs
 dafny/dafny assignment2/compression/compression.dfy
 assignment2/compression/IoNative.cs
+
+  if action[0] == '1' {
+    LZSS.encode(from, to, env);
+    print "Compress me!\n";
+  } else if action[0] == '0' {
+    LZSS.encode(from, to, env);
+    print "Compress me!\n";
+  } else {
+    print "[USAGE]: mono compression.exe SrcFilename DstFilename!\n";
+    return;
+  }*/
+
+O 3291648 - 3291648 - 3291648 - 3291648
+C 5684277 - 3710680 - 4606370 - 3556747
+            -w ignore 1

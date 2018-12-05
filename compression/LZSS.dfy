@@ -1,156 +1,249 @@
 include "Io.dfy"
 class LZSS {
-    // if B == 0 8bits if B == 1 8+4+8=20bits
-    // 
-    static const BITFLAG_CODEWORD := 0;
-    static const BITFLAG_PAIR := 1;
-    static const LOOKAHEAD_BUFFER_SIZE := 5;
-    static const SEARCH_BUFFER_SIZE := 4;
-    static const FLUSH_SIZE := 256;
-    static method ShiftInsert(buffer: array<byte>, insert: array<byte>) returns(ret: array<byte>)
-    {
-        ret := new [buffer.Length];
+    static const BITFLAG_WORD: bit := 0;
+    static const BITFLAG_PAIR: bit := 1;
+    static const LOOKAHEAD := (4, 16);
+    static const SEARCH := (4, 16);
+    static const WINDOW := (8, 256); //LOOKAHEAD + SEARCH
+    static const BYTE_SIZE := 8; //8 bits
 
-        var index := 1;
-        while index <= buffer.Length
-            decreases buffer.Length - index
+    static method MatchSize(buffer: array<byte>, position1: int, position2: int, ceiling: int) returns(size: int)
+        requires 0 <= position1 < position2 <= ceiling <= buffer.Length
+        ensures  0 <= size
+    {
+        size := 0;
+        while position1 + size < ceiling && position2 + size < buffer.Length // tho eof will never be a match
+            decreases ceiling - size
+            invariant 0 <= position1 + size <= ceiling <= buffer.Length
         {
-            ret[index-1] := if index <= buffer.Length - insert.Length
-                then buffer[index+insert.Length-1] else insert[insert.Length - (buffer.Length-index + 1)];
-            index := index + 1;
+            if buffer[position1 + size] != buffer[position2 + size] {break;}
+            size := size + 1;
         }
     }
 
-    static method GetMatchSize(buffer: array<byte>, pos1: int, pos2: int) returns(len: int)
-        requires 0 <= pos1 < pos2 < buffer.Length
-        ensures len >= 1
+    static method FindBiguestMatch(buffer: array<byte>, position: int) returns(match_: bool, bestOffsetSoFar: int, size: int)
+        requires 0 <= position < buffer.Length
+        ensures match_ ==> (size >= 0 && bestOffsetSoFar >= 1)
     {
-        len := 1;
-        while pos2 + len < buffer.Length
-            decreases buffer.Length - (len + pos2)
-        {
-            if buffer[pos1 + len] != buffer[pos2 + len] {break;}
-            len := len + 1;
-        }
-    }
-    static method FindBiguestMatch(buffer: array<byte>, pos: int) returns(match_: bool, bestOffsetSoFar: int, len: int)
-        requires 0 <= pos < buffer.Length
-        ensures 0 <= len
-    {
-        bestOffsetSoFar := 1;
         var offset := 1;
+
+        size := 0;
         match_ := true;
-        len := 0;
-        
-        while pos - offset >= 0
-            decreases pos - offset
+        bestOffsetSoFar := 1;
+
+        var floor := if position - SEARCH.1 >= 0 then position-SEARCH.1 else 0;
+
+        while floor <= position - offset as int
+            decreases position - offset as int - floor
         {
-            if(buffer[pos] == buffer[pos - offset]) {
-                var newLen := GetMatchSize(buffer, pos - offset, pos);
-                bestOffsetSoFar := if len > newLen then bestOffsetSoFar else offset;
-                len := if len > newLen then len else newLen;
+            if(buffer[position] == buffer[position-offset as int]) {
+                var ceiling := if position + LOOKAHEAD.1 < buffer.Length then position + LOOKAHEAD.1 else buffer.Length-1;
+                var newSize := MatchSize(buffer, position - offset as int, position, ceiling);
+                bestOffsetSoFar := if size >= newSize then bestOffsetSoFar else offset;
+                size := if size >= newSize then size else newSize;
             }
             offset := offset + 1;
         }
 
-        if bestOffsetSoFar == 1 && len == 0 {
-            match_ := false;
+        match_ := !(bestOffsetSoFar == 1 && size == 0);
+
+        if size >= WINDOW.1 - 1 {
+            print(position);
+            print("-");
+            print(bestOffsetSoFar);
+            print("-");
+            print(size);
+            print("-");
+            print(match_);
+            print("\n");
         }
-    }
-    
-    method queueWord(bitflag: int, word: byte)
-    {
-        print "<";
-        print bitflag;
-        print ",";
-        print word;
-        print ">";
-    }
-
-    method queuePair(bitflag: int, offset: int, len: int, word: byte)
-    {
-        print "<";
-        print bitflag;
-        print ",";
-        print offset;
-        print ",";
-        print len;
-        print ",";
-        print word;
-        print ">";
-    }
-
-    constructor () requires true {}
-    method encode(from: array<char>, to: array<char>, ghost env:HostEnvironment?)
-        requires env != null && env.Valid() && env.ok.ok();
-        modifies this;
-        modifies env.ok;
-        modifies env.files;
-    {
-        var fromSuccess, fromFs := FileStream.Open(from, env);
-        if !fromSuccess {return;}
-        var file_offset := 0;
-        var success, size: int32 := FileStream.FileLength(from, env);
-        if !success {return;}
-        var toSuccess, toFs := FileStream.Open(to, env);
-        if !toSuccess {return;}
-        var outfile_offset := 0;
-
-        //if(size < LOOKAHEAD_BUFFER_SIZE + SEARCH_BUFFER_SIZE) {
-        //    cpy(from, to);
-        //    return;
-        //}
         
-        var buffer := new byte[LOOKAHEAD_BUFFER_SIZE+SEARCH_BUFFER_SIZE];
-        if !success || file_offset as int + buffer.Length as int > size as int {return;}
-        var ok := fromFs.Read(file_offset as nat32, buffer, SEARCH_BUFFER_SIZE as int32, LOOKAHEAD_BUFFER_SIZE as int32);
-        if !ok {return;}
+    }
 
-        var insert: array<byte>;
+    static method Queue(queue: array<bit>, queuePointer: int, toQueue: int, bitsToQueue: int) returns(nPointer: int)
+        requires 0 <= queuePointer < queue.Length
+        requires 1 <= bitsToQueue <= 32
+        requires 1 <= queuePointer + bitsToQueue <= queue.Length
+        modifies queue
+    {
+        var iter := 1;
+        var nb := toQueue;
+        nPointer := queuePointer;
 
-        while file_offset as int + insert.Length as int <= size as int && ok && file_offset < size
-            decreases size - file_offset
-            //decreases size as int - (file_offset as int + insert.Length as int)
-            //modifies fromFs
-            //modifies env.ok;
-            //modifies env.files;
-            //invariant ok;
-            //invariant fromFs.IsOpen();
-            //invariant env.Valid();
-            //invariant env.ok.ok();
+        while iter <= bitsToQueue && nPointer < queue.Length
+            decreases bitsToQueue - iter
+            decreases queue.Length - nPointer
         {
-            insert := new byte[1];
-            ok := fromFs.Read(file_offset as nat32, insert, 0 as int32, insert.Length as int32);
-            file_offset := file_offset + 1;
-            break;
+            queue[nPointer+bitsToQueue-iter] := if nb%2 == 1 then 1 as bit else 0 as bit;
+            nb := nb/2;
+            iter := iter + 1;
+        }
+        nPointer := nPointer + bitsToQueue;
+    }
+
+    static method Flush(to: array<byte>, toSize: int, queue: array<bit>, qpointer: int) returns(ntoSize: int, nqpointer: int)
+        requires 0 <= qpointer <= queue.Length
+        requires 0 <= toSize + qpointer / BYTE_SIZE <= to.Length
+        modifies to, queue;
+        //ensures nqpointer < BYTE_SIZE;
+    {
+        nqpointer := 0;
+        ntoSize := toSize;
+        
+        var toFlush := toSize + qpointer / BYTE_SIZE;
+        while ntoSize < toFlush && nqpointer < qpointer
+            decreases toFlush - ntoSize
+        {
+            var exp: byte := 128;
+            var i := 0;
+            while i < BYTE_SIZE
+                decreases BYTE_SIZE - i
+            {
+                to[ntoSize] := to[ntoSize] + if queue[nqpointer] == 0 then 0 else exp;
+                i := i + 1;
+                exp := exp/2;
+                nqpointer := nqpointer + 1;
+            }
+
+            ntoSize := ntoSize + 1;
         }
 
-        /*while ok && file_offset < size
-            decreases size - file_offset
-            modifies fromFs
-            modifies env.ok;
-            modifies env.files;
-            invariant fromFs.IsOpen();
-            invariant env.Valid();
-            invariant env.ok.ok();
+        var i := 0;
+        while i + nqpointer < qpointer
+            decreases qpointer - i
         {
-            if buffer == null {break;}
-            if buffer.Length <= SEARCH_BUFFER_SIZE {return;}
-            var match_, offset, len := FindBiguestMatch(buffer, SEARCH_BUFFER_SIZE);
-            
-            file_offset := file_offset + 1;
+            queue[i] := queue[nqpointer+i];
+            i := i + 1;
+        }
 
-            if(!match_) {
-                queueWord(1, buffer[SEARCH_BUFFER_SIZE]);
-                insert := new byte[1];
+        nqpointer := i;
+    }
+
+    static method Encode(from: array<byte>) returns(to: array<byte>, toSize: int)
+    {
+        toSize := 0;
+        to := new byte[from.Length * 2];
+       
+        var pointer: int := 0;
+
+        var qpointer: int := 0;
+        var queue := new bit[128];
+        var totalBits := 0;
+        while pointer < from.Length
+            decreases from.Length - pointer
+        {
+            var match_, offset, len := FindBiguestMatch(from, pointer);
+    
+            if match_ {
+                //<1,offset,len,word>
+                if !(0 <= qpointer < queue.Length) {break;}
+                queue[qpointer] := BITFLAG_PAIR;
+                qpointer := qpointer + 1;
+                
+                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
+                qpointer := Queue(queue, qpointer, offset as int, SEARCH.0);
+
+                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
+                qpointer := Queue(queue, qpointer, len as int, WINDOW.0);
+                pointer := pointer + len;
+                
+                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
+                qpointer := Queue(queue, qpointer, from[pointer] as int, BYTE_SIZE);
             } else {
-                queuePair(0, offset, len, buffer[SEARCH_BUFFER_SIZE]);
-                insert := new byte[len];
+                //<0,word>
+                if !(0 <= qpointer < queue.Length) {break;}
+                queue[qpointer] := BITFLAG_WORD;
+                qpointer := qpointer + 1;
+                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
+                qpointer := Queue(queue, qpointer, from[pointer] as int, BYTE_SIZE);
+                pointer := pointer + 1;
+            }
+            if !(0 <= qpointer <= queue.Length) || !(0 <= toSize + qpointer / BYTE_SIZE <= to.Length) {break;}
+            toSize, qpointer := Flush(to, toSize, queue, qpointer);
+        }
+    }
+
+    static method GetByte(queue: array<bit>, qp: int, bitTo: int) returns(b: byte, nqp: int)
+        requires 1 <= bitTo <= 8
+    {
+        var i := 1;
+        var exp := 1;
+        while i <= bitTo
+            decreases bitTo - i
+        {
+            b := b + if queue[qp+bitTo-i] == 0 then 0 else exp;
+            exp := exp*2;
+            i := i + 1;
+        }
+        nqp := qp + bitTo;
+    }
+    static method Decode(from: array<byte>) returns(to: array<byte>, toSize: int)
+    {
+        to := new byte[from.Length * 8];
+        var pointer: int := 0;
+        var queue: array<bit> := new bit[256];
+        var queuePointer: int := 0;
+        var qp := 0;
+        toSize := 0;
+
+        while pointer < from.Length
+            decreases from.Length - pointer
+        {
+            while 0 <= queuePointer < queue.Length && queuePointer + BYTE_SIZE < queue.Length && pointer < from.Length
+                decreases from.Length - pointer
+            {
+                queuePointer := LZSS.Queue(queue, queuePointer, from[pointer] as int, BYTE_SIZE);
+                pointer := pointer + 1;
             }
             
-            if !ok || file_offset as int + insert.Length as int > size as int {break;}
-            ok := fromFs.Read(file_offset as nat32, insert, 0 as int32, insert.Length as int32);
-            buffer := ShiftInsert(buffer, insert);
-        }*/
+            var tmp := 0;
+            while tmp < queue.Length {
+                print(queue[tmp]);
+                tmp := tmp + 1;
+            }
+            print("\n");
+
+            if 0 <= qp < queue.Length && queue[qp] == 1 {
+                //<1,offset,len,word>
+                qp := qp + 1;
+                var offset, len, word;
+                offset, qp := GetByte(queue, qp, SEARCH.0);
+                len, qp := GetByte(queue, qp, WINDOW.0);
+                word, qp := GetByte(queue, qp, BYTE_SIZE);
+
+                var i: int := 0;
+                while i < len as int
+                    decreases len as int - i
+                {
+                    to[toSize + i] := to[toSize - offset as int + i];
+                    i := i + 1;
+                }
+
+                toSize := toSize + len as int;
+                to[toSize] := word;
+                toSize := toSize + 1;
+            } else {
+                //<0,word>
+                //097 098 099 097 098 099 097 098 099
+                //<0,a><0,b><0,c><3,6,0> 9 + 9 + 9 + 5 + 8 + 8 = 6
+                //0 01100001 0 01100010 0 01100011 1 0011 00000101
+                //48 152 140
+                
+                qp := qp + 1;
+                var word;
+                word, qp := GetByte(queue, qp, BYTE_SIZE);
+                toSize := toSize + 1;
+            }
+
+            var i := 0;
+            while i <= qp + i < queuePointer <= queue.Length
+                decreases queuePointer - i
+            {
+                queue[i] := queue[qp+i];
+                i := i + 1;
+            }
+            queuePointer := i;
+            qp := 0;
+        }
     }
 }

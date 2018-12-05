@@ -51,47 +51,65 @@ method {:main} Main(ghost env:HostEnvironment?)
   modifies env.ok;
   modifies env.files;
 {
-  /*var a: array<byte> := ArrayFromSeq([0]);
-  var b: array<byte> := ArrayFromSeq([1, 2, 3, 4]);
-
-  var c := LZSS.ShiftInsert(a, b);
-  
-  var i := 0;
-  while i < c.Length
-    decreases c.Length - i
-  {
-    print c[i];
-    print "\n";
-    i := i + 1;
-  }*/
-
-  /*var buffer: array<byte> := ArrayFromSeq([1, 2, 3, 4, 5, 1, 2, 3, 4]);
-
-  var i := 0;
-  while i < buffer.Length
-    decreases buffer.Length - i
-  {
-    var ok:bool, bestOffsetSoFar: int, len: int := LZSS.FindBiguestMatch(buffer, i);
-    print ok;
-    print " - ";
-    print bestOffsetSoFar;
-    print " - ";
-    print len;
-    print "\n";
-    i := i + 1;
-  }*/
-
-  var lzss: LZSS := new LZSS();
-
   var argc := HostConstants.NumCommandLineArgs(env);
-  if argc != 3 {
-    print "[USAGE]: mono compression.exe SrcFilename DstFilename!\n";
+  if argc != 4 {
+    print "[USAGE]: mono cp.exe SrcFilename DstFilename!\n";
     return;
   }
   
-  var from := HostConstants.GetCommandLineArg(1, env);
-  var to := HostConstants.GetCommandLineArg(2, env);
-  lzss.encode(from, to, env);
+  var src := HostConstants.GetCommandLineArg(2, env);
 
-  print "Compress me!\n";
+  var srcResult := FileStream.FileExists(src, env);
+  if !srcResult {
+    print "Source File Does Not Exist!\n";
+    return;
+  }
+  
+  var srcSuccess, srcFs := FileStream.Open(src, env);
+  if !srcSuccess {
+    print "Failed to open src file!\n";
+    return;
+  }
+
+  var success, len: int32 := FileStream.FileLength(src, env);
+  if !success {
+    print "Couldn't get stream size!\n";
+    return;
+  }
+
+  var buffer := new byte[len];
+  var srcOk := srcFs.Read(0 as nat32, buffer, 0, len);
+  var l := 0;
+  while l < buffer.Length
+    decreases buffer.Length - l
+  {
+    print(buffer[l]);
+    print("-");
+    l := l + 1;
+  }
+  print("\n");
+  var to: array<byte>, toSize: int := LZSS.Encode(buffer);
+  var i := 0;
+  while i < toSize && i < to.Length
+    decreases to.Length - i
+  {
+    print(to[i]);
+    print("-");
+    i := i + 1;
+  }
+  print("\n");
+  
+  if 0 < toSize < to.Length {
+    var a := ArrayFromSeq(to[0..toSize]);
+    var to1: array<byte>, toSize1: int := LZSS.Decode(a);
+    var i := 0;
+    while i < to1.Length
+      decreases to1.Length - i
+    {
+      print(to1[i]);
+      print("-");
+      i := i +1;
+    }
+    print("\n");
+  }
 }

@@ -6,6 +6,7 @@
  * Rui Maranhao -- rui@computer.org
  */
 
+newtype {:nativeType "byte"}   bit   = b:int | 0 <= b < 2
 newtype {:nativeType "byte"}   byte   = b:int | 0 <= b < 256
 newtype {:nativeType "ushort"} uint16 = i:int | 0 <= i < 0x10000
 newtype {:nativeType "int"}    int32  = i:int | -0x80000000 <= i < 0x80000000
