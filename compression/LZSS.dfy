@@ -12,7 +12,7 @@ class LZSS {
         ensures  0 <= size
     {
         size := 0;
-        while position1 + size < ceiling && position2 + size < buffer.Length // tho eof will never be a match
+        while position1 + size < ceiling && position2 + size < buffer.Length-1 // eof can never match
             decreases ceiling - size
             invariant 0 <= position1 + size <= ceiling <= buffer.Length
         {
@@ -46,18 +46,6 @@ class LZSS {
         }
 
         match_ := !(bestOffsetSoFar == 1 && size == 0);
-
-        if size >= WINDOW.1 - 1 {
-            print(position);
-            print("-");
-            print(bestOffsetSoFar);
-            print("-");
-            print(size);
-            print("-");
-            print(match_);
-            print("\n");
-        }
-        
     }
 
     static method Queue(queue: array<bit>, queuePointer: int, toQueue: int, bitsToQueue: int) returns(nPointer: int)
@@ -149,6 +137,7 @@ class LZSS {
                 
                 if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
                 qpointer := Queue(queue, qpointer, from[pointer] as int, BYTE_SIZE);
+                pointer := pointer + 1;
             } else {
                 //<0,word>
                 if !(0 <= qpointer < queue.Length) {break;}
@@ -159,6 +148,10 @@ class LZSS {
                 pointer := pointer + 1;
             }
             if !(0 <= qpointer <= queue.Length) || !(0 <= toSize + qpointer / BYTE_SIZE <= to.Length) {break;}
+            toSize, qpointer := Flush(to, toSize, queue, qpointer);
+        }
+        if qpointer != 0 {
+            qpointer := Queue(queue, qpointer, 0, BYTE_SIZE);
             toSize, qpointer := Flush(to, toSize, queue, qpointer);
         }
     }
@@ -179,37 +172,62 @@ class LZSS {
     }
     static method Decode(from: array<byte>) returns(to: array<byte>, toSize: int)
     {
-        to := new byte[from.Length * 8];
+        to := new byte[from.Length * 16];
         var pointer: int := 0;
-        var queue: array<bit> := new bit[256];
+        var queue: array<bit> := new bit[64];
         var queuePointer: int := 0;
         var qp := 0;
         toSize := 0;
 
-        while pointer < from.Length
-            decreases from.Length - pointer
+        while true
+            //decreases from.Length - pointer
         {
-            while 0 <= queuePointer < queue.Length && queuePointer + BYTE_SIZE < queue.Length && pointer < from.Length
+            while queuePointer + BYTE_SIZE < queue.Length && pointer < from.Length
                 decreases from.Length - pointer
             {
                 queuePointer := LZSS.Queue(queue, queuePointer, from[pointer] as int, BYTE_SIZE);
                 pointer := pointer + 1;
             }
-            
-            var tmp := 0;
-            while tmp < queue.Length {
-                print(queue[tmp]);
-                tmp := tmp + 1;
-            }
-            print("\n");
 
-            if 0 <= qp < queue.Length && queue[qp] == 1 {
+            if queuePointer - qp < 8 {break;}
+            else if queue[qp] == 1 {
                 //<1,offset,len,word>
                 qp := qp + 1;
                 var offset, len, word;
+
+                if toSize == 8170 {
+                    //var a1, a2 := GetByte(queue, qp-8, 8);
+                    var j := qp;
+                    while j < queue.Length {
+                        print(queue[j]);
+                        j := j + 1;
+                    }
+                    print("\n");
+                    print(qp);
+                    print("-");
+                    print(queuePointer);
+                    print("-");
+                    print(offset);
+                    print("-");
+                    print(len);
+                    print("-");
+                    print(word);
+                    print("\n");
+                }//000000010000000000000001111
+
                 offset, qp := GetByte(queue, qp, SEARCH.0);
                 len, qp := GetByte(queue, qp, WINDOW.0);
                 word, qp := GetByte(queue, qp, BYTE_SIZE);
+
+                if toSize == 8170 {
+                    //var a1, a2 := GetByte(queue, qp-8, 8);
+                    print(offset);
+                    print("-");
+                    print(len);
+                    print("-");
+                    print(word);
+                    print("\n");
+                }
 
                 var i: int := 0;
                 while i < len as int
@@ -224,19 +242,15 @@ class LZSS {
                 toSize := toSize + 1;
             } else {
                 //<0,word>
-                //097 098 099 097 098 099 097 098 099
-                //<0,a><0,b><0,c><3,6,0> 9 + 9 + 9 + 5 + 8 + 8 = 6
-                //0 01100001 0 01100010 0 01100011 1 0011 00000101
-                //48 152 140
-                
                 qp := qp + 1;
                 var word;
                 word, qp := GetByte(queue, qp, BYTE_SIZE);
+                to[toSize] := word;
                 toSize := toSize + 1;
             }
 
             var i := 0;
-            while i <= qp + i < queuePointer <= queue.Length
+            while qp + i < queuePointer <= queue.Length
                 decreases queuePointer - i
             {
                 queue[i] := queue[qp+i];
@@ -244,6 +258,8 @@ class LZSS {
             }
             queuePointer := i;
             qp := 0;
+            
+            if qp == queuePointer {break;}
         }
     }
 }

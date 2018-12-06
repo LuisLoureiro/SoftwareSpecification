@@ -58,6 +58,7 @@ method {:main} Main(ghost env:HostEnvironment?)
   }
   
   var src := HostConstants.GetCommandLineArg(2, env);
+  var dst := HostConstants.GetCommandLineArg(3, env);
 
   var srcResult := FileStream.FileExists(src, env);
   if !srcResult {
@@ -70,6 +71,11 @@ method {:main} Main(ghost env:HostEnvironment?)
     print "Failed to open src file!\n";
     return;
   }
+  var dstSuccess, dstFs := FileStream.Open(dst, env);
+  if !dstSuccess {
+    print "Failed to open dst file!\n";
+    return;
+  }
 
   var success, len: int32 := FileStream.FileLength(src, env);
   if !success {
@@ -79,7 +85,8 @@ method {:main} Main(ghost env:HostEnvironment?)
 
   var buffer := new byte[len];
   var srcOk := srcFs.Read(0 as nat32, buffer, 0, len);
-  var l := 0;
+  if !srcOk {return;}
+  /*var l := 0;
   while l < buffer.Length
     decreases buffer.Length - l
   {
@@ -87,9 +94,9 @@ method {:main} Main(ghost env:HostEnvironment?)
     print("-");
     l := l + 1;
   }
-  print("\n");
+  print("\n");*/
   var to: array<byte>, toSize: int := LZSS.Encode(buffer);
-  var i := 0;
+  /*var i := 0;
   while i < toSize && i < to.Length
     decreases to.Length - i
   {
@@ -97,19 +104,48 @@ method {:main} Main(ghost env:HostEnvironment?)
     print("-");
     i := i + 1;
   }
-  print("\n");
+  print("\n");*/
   
   if 0 < toSize < to.Length {
     var a := ArrayFromSeq(to[0..toSize]);
     var to1: array<byte>, toSize1: int := LZSS.Decode(a);
+    if 0 < toSize1 < to1.Length {
+      to1 := ArrayFromSeq(to1[0..toSize1]);
+    }
     var i := 0;
+    if buffer.Length != to1.Length {return;}
+    
     while i < to1.Length
       decreases to1.Length - i
     {
-      print(to1[i]);
-      print("-");
-      i := i +1;
+      //print(to1[i]);
+      //print("-");
+      if buffer[i] != to1[i] {
+        print("(");
+        print(i);
+        print(",");
+        print(buffer[i]);
+        print(",");
+        print(to1[i]);
+        print(")");
+        print("\n");
+      
+        //break;
+      }
+      i := i + 1;
     }
     print("\n");
+    print("(");
+    print(buffer.Length);
+    print(",");
+    print(a.Length);
+    print(",");
+    print(to1.Length);
+    print(")\n");
+
+    var dstOk := dstFs.Write(0 as nat32, to1, 0, to1.Length as int32);
+    //if dstOk {
+    //  var a := dstFs.Close();
+    //}
   }
 }

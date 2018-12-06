@@ -14,7 +14,7 @@ TODO: QS
 
 dafny/dafny assignment2/cp-basic/cp.dfy assignment2/cp-basic/IoNative.cs
 dafny/dafny assignment2/cp-adv/cp.dfy assignment2/cp-adv/IoNative.cs
-dafny/dafny assignment2/compression/compression.dfy
+dafny/dafny assignment2/compression/compression.dfy assignment2/cp-adv/IoNative.cs
 assignment2/compression/IoNative.cs
 
   if action[0] == '1' {
