@@ -14,17 +14,17 @@ class LZSS {
     }
     
     static method MatchLength(buffer: array<byte>, position1: int, position2: int) returns(mlength: int)
-        requires 0 <= position1 < position2 < buffer.Length
+        requires 0 <= position1 < position2 < buffer.Length-1
         requires buffer[position1] == buffer[position2]
         ensures 1 <= mlength <= WINDOW.1
-        ensures position2 + mlength <= buffer.Length
+        ensures position2 + mlength < buffer.Length
         ensures buffer[position1..position1+mlength] == buffer[position2..position2+mlength]
     {
         mlength := 1;
-        while mlength < WINDOW.1 && position2 + mlength < buffer.Length && buffer[position1 + mlength] == buffer[position2 + mlength]
+        while mlength < WINDOW.1 && position2 + mlength < buffer.Length-1 && buffer[position1 + mlength] == buffer[position2 + mlength]
             decreases WINDOW.1 - mlength
             invariant mlength <= WINDOW.1
-            invariant position2 + mlength <= buffer.Length
+            invariant position2 + mlength <= buffer.Length-1
             invariant buffer[position1..position1+mlength] == buffer[position2..position2+mlength]
         {
             mlength := mlength + 1;
@@ -34,22 +34,23 @@ class LZSS {
     static method LongestMatch(buffer: array<byte>, position: int) returns(match_: bool, offset: int, size: int)
         requires 0 < position < buffer.Length
         ensures 1 <= offset < SEARCH.1
-        ensures match_ ==> 0 < size < WINDOW.1
+        ensures match_ ==> 0 < size <= WINDOW.1
         ensures position - offset + size <= buffer.Length
         ensures 0 <= position - offset
-        ensures position + size < buffer.Length
+        ensures position + size <= buffer.Length
         ensures match_ ==> buffer[position..position+size] == buffer[position-offset..position-offset+size]
     {
         offset := 1;
         size := 0;
 
         var cOffset := 1;
-        while cOffset < SEARCH.1 && 0 <= position - cOffset
+
+        while cOffset < SEARCH.1 && 0 <= position - cOffset && position + size < buffer.Length - 1
             decreases SEARCH.1 - cOffset
-            invariant size < WINDOW.1
+            invariant size <= WINDOW.1
             invariant offset < SEARCH.1
             invariant 0 <= position - offset
-            invariant position + size < buffer.Length
+            invariant position + size <= buffer.Length
             invariant buffer[position..position+size] == buffer[position-offset..position-offset+size]
         {
             if(buffer[position] == buffer[position-cOffset]) {
@@ -69,16 +70,8 @@ class LZSS {
     {
         b := 0;
 
-        var iter := BYTE.0-1;
+        var iter := |bits|-1;
         var exp2: byte := 1;
-
-        while |bits| <= iter
-            decreases iter - |bits|
-        {
-            if exp2 as int *2 >= BYTE.1 {break;} // should never happen
-            exp2 := exp2*2;
-            iter := iter - 1;
-        }
 
         while 0 <= iter < |bits|
             decreases iter - 0
@@ -114,7 +107,7 @@ class LZSS {
         nbyte := BitsToByte(bits[iter..]);
         bytes := bytes + [nbyte];
     }
-    
+
     static method ByteToBits(b: byte, bitsToConvert: int) returns(bits: seq<bit>)
         requires 0 <= bitsToConvert <= BYTE.0
         ensures |bits| == bitsToConvert
@@ -164,7 +157,7 @@ class LZSS {
         bits := bits + nbits;
     }
 
-    static method Encode(from: array<byte>) returns(to: seq<byte>)
+    static method {:autoReq} Encode(from: array<byte>) returns(to: seq<byte>)
     {
         to := [];
         if from.Length == 0 {return;}
@@ -172,6 +165,10 @@ class LZSS {
         var bits := [];
         var pointer: int := 0;
         
+        /*print("(0,");
+        print(from[pointer]);
+        print(")\n");*/
+
         bits := bits + [BITFLAG_WORD];
         var word_bits := ByteToBits(from[pointer], BYTE.0); assert BYTE.0 <= 8;
         bits := bits + word_bits;
@@ -182,24 +179,32 @@ class LZSS {
         {
             var match_, offset, len := LongestMatch(from, pointer);
 
-            if match_ && len*(SEARCH.0 + WINDOW.0 + BYTE.0) >= len*(BYTE.0+1)  {
+            if match_ && len*(SEARCH.0 + WINDOW.0 + BYTE.0) >= len*(BYTE.0+1) {
                 //<1,offset,len,word>
-                print("1");
+                /*print("(1,");
+                print(offset);
+                print(",");
+                print(len);
+                print(",");
+                print(from[pointer+len]);
+                print(")\n");*/
+
                 bits := bits + [BITFLAG_PAIR];
                 var offset_bits := ByteToBits(offset as byte, SEARCH.0); assert SEARCH.0 <= 8;
                 bits := bits + offset_bits;
-                print("2-");
-                print(len);
-                assert 1 <= len <= 256;
-                var len_bits := ByteToBits((len as int -1) as byte, SEARCH.0); assert WINDOW.0 <= 8;
+                var len_bits := ByteToBits((len as int -1) as byte, WINDOW.0); assert WINDOW.0 <= 8;
                 bits := bits + len_bits;
-                print("-3");
-                var word_bits := ByteToBits(from[pointer], BYTE.0); assert BYTE.0 <= 8;
-                bits := bits + word_bits;
-                print("4\n");
                 pointer := pointer + len;
+
+                if pointer >= from.Length {return;}//!!!!
+                var word_bits := ByteToBits(from[pointer] as byte, BYTE.0); assert BYTE.0 <= 8;
+                bits := bits + word_bits;
+                pointer := pointer + 1;
             } else {
                 //<0,word>
+                /*print("(0,");
+                print(from[pointer]);
+                print(")\n");*/
 
                 bits := bits + [BITFLAG_WORD];
                 var word_bits := ByteToBits(from[pointer], BYTE.0); assert BYTE.0 <= 8;
@@ -208,10 +213,10 @@ class LZSS {
             }
         }
         
-        to := BitsToBytes(bits);
+        to := BitsToBytes(bits+[0,0,0,0,0,0]);
     }
 
-    static method Decode(from: array<byte>) returns(to: seq<byte>)
+    static method {:autoReq} Decode(from: array<byte>) returns(to: seq<byte>)
     {
         to := [];
         if from.Length == 0 { return; }
@@ -222,7 +227,7 @@ class LZSS {
             decreases |bits|
         {
             if |bits| < 8 { break; }
-            else if bits[0] == 1 {
+            else if bits[0] == BITFLAG_PAIR {
                 //<1,offset,len,word>
                 bits := bits[1..];
 
@@ -230,28 +235,43 @@ class LZSS {
                 
                 offset := BitsToByte(bits[0..SEARCH.0]);
                 bits := bits[SEARCH.0..];
+                if WINDOW.0 >= |bits| {return;}//!!!!!!!!!
                 len := BitsToByte(bits[0..WINDOW.0]);
                 bits := bits[WINDOW.0..];
+                if BYTE.0 >= |bits| {return;}//!!!!!!!!!
                 word := BitsToByte(bits[0..BYTE.0]);
                 bits := bits[BYTE.0..];
 
+                /*print("[1,");
+                print(offset);
+                print(",");
+                print(len);
+                print(",");
+                print(word);
+                print("]\n");*/
+
                 var i := 0;
-                while i <= len as int //&& 0 <= |to| - offset as int + i < |to|
+                while i <= len as int && 0 <= |to| - offset as int < |to|
                     decreases len as int - i
                 {
-                    to := to + [to[|to| - offset as int + i]];
+                    to := to + [to[|to| - offset as int]];
                     i := i + 1;
                 }
-
+                
                 to := to + [word];
             } else {
                 //<0,word>
                 bits := bits[1..];
                 
                 var word;
+                if BYTE.0 >= |bits| {return;}//!!!!!!!!!
                 word := BitsToByte(bits[0..BYTE.0]);
                 bits := bits[BYTE.0..];
                 to := to + [word];
+
+                /*print("[0,");
+                print(word);
+                print("]\n");*/
             }
         }
     }

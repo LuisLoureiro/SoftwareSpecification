@@ -56,7 +56,7 @@ method {:main} Main(ghost env: HostEnvironment?)
     print "Couldn't get stream size!\n";
     return;
   }
-
+  
   var buffer := new byte[len];
   var srcOk := srcFs.Read(0 as nat32, buffer, 0, len);
   if !srcOk {return;}
