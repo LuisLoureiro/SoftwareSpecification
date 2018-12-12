@@ -12,9 +12,9 @@ method ArrayFromSeq<A>(s: seq<A>) returns (a: array<A>)
 {
   a := new A[|s|] ( i requires 0 <= i < |s| => s[i] );
 }
-
 method {:main} Main(ghost env: HostEnvironment?)
   requires env != null && env.Valid() && env.ok.ok()
+  requires |env.constants.CommandLineArgs()| == 3
   modifies env.ok
   modifies env.files
 {
@@ -59,29 +59,14 @@ method {:main} Main(ghost env: HostEnvironment?)
   var srcOk := srcFs.Read(0 as nat32, buffer, 0, len);
   if !srcOk {return;}
   var dstOk := dstFs.Write(0 as nat32, buffer, 0, len);
+
+  if !dstOk {return;}
+  var bufferDst := new byte[len];
+  dstOk := dstFs.Read(0 as nat32, bufferDst, 0, len);
+  
   if !dstOk {return;}
   var ok := srcFs.Close();
   if !ok {return;}
   ok := dstFs.Close();
   print "Done!\n";
 }
-/*lemma ReadLemma(fs: FileStream, file_offset: nat32, buffer: array?<byte>, num_bytes: int32)
-  ensures fs.env.Valid();
-  ensures fs.env.ok.ok();
-  ensures fs.IsOpen();
-  ensures fs.Name() in fs.env.files.state();
-  ensures file_offset as int + num_bytes as int <= |fs.env.files.state()[fs.Name()]|;
-  ensures fresh(buffer);
-{
-  assume false;
-}
-
-while file_offset as int + BYTES_TO_READ as int < len as int
-    decreases len as int - (file_offset as int + BYTES_TO_READ as int);
-  {
-    ReadLemma(srcFs, file_offset as nat32, buffer, BYTES_TO_READ);
-    srcOk := srcFs.Read(file_offset as nat32, buffer, start, BYTES_TO_READ);
-    dstOk := dstFs.Write(file_offset as nat32, buffer, start, BYTES_TO_READ);
-    file_offset := file_offset + BYTES_TO_READ;
-  }
-*/

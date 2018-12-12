@@ -17,6 +17,7 @@ method {:main} Main(ghost env: HostEnvironment?)
   requires env != null && env.Valid() && env.ok.ok()
   modifies env.ok
   modifies env.files
+  requires |env.constants.CommandLineArgs()| == 3
 {
   var argc := HostConstants.NumCommandLineArgs(env);
   if argc != 3 {

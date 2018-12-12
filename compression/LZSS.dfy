@@ -1,265 +1,258 @@
 include "Io.dfy"
-class LZSS {
+class LZSS {    
     static const BITFLAG_WORD: bit := 0;
     static const BITFLAG_PAIR: bit := 1;
-    static const LOOKAHEAD := (4, 16);
-    static const SEARCH := (4, 16);
-    static const WINDOW := (8, 256); //LOOKAHEAD + SEARCH
-    static const BYTE_SIZE := 8; //8 bits
+    static const LOOKAHEAD := (2, 4);
+    static const SEARCH := (6, 64);
+    static const WINDOW := (LOOKAHEAD.0+SEARCH.0, LOOKAHEAD.1*SEARCH.1);
+    static const BYTE := (8, 256);
 
-    static method MatchSize(buffer: array<byte>, position1: int, position2: int, ceiling: int) returns(size: int)
-        requires 0 <= position1 < position2 <= ceiling <= buffer.Length
-        ensures  0 <= size
+    static method ArrayFromSeq<A>(s: seq<A>) returns (a: array<A>)
+        ensures a[..] == s
     {
-        size := 0;
-        while position1 + size < ceiling && position2 + size < buffer.Length-1 // eof can never match
-            decreases ceiling - size
-            invariant 0 <= position1 + size <= ceiling <= buffer.Length
+        a := new A[|s|] ( i requires 0 <= i < |s| => s[i] );
+    }
+    
+    static method MatchLength(buffer: array<byte>, position1: int, position2: int) returns(mlength: int)
+        requires 0 <= position1 < position2 < buffer.Length
+        requires buffer[position1] == buffer[position2]
+        ensures 1 <= mlength <= WINDOW.1
+        ensures position2 + mlength <= buffer.Length
+        ensures buffer[position1..position1+mlength] == buffer[position2..position2+mlength]
+    {
+        mlength := 1;
+        while mlength < WINDOW.1 && position2 + mlength < buffer.Length && buffer[position1 + mlength] == buffer[position2 + mlength]
+            decreases WINDOW.1 - mlength
+            invariant mlength <= WINDOW.1
+            invariant position2 + mlength <= buffer.Length
+            invariant buffer[position1..position1+mlength] == buffer[position2..position2+mlength]
         {
-            if buffer[position1 + size] != buffer[position2 + size] {break;}
-            size := size + 1;
+            mlength := mlength + 1;
         }
     }
 
-    static method FindBiguestMatch(buffer: array<byte>, position: int) returns(match_: bool, bestOffsetSoFar: int, size: int)
-        requires 0 <= position < buffer.Length
-        ensures match_ ==> (size >= 0 && bestOffsetSoFar >= 1)
+    static method LongestMatch(buffer: array<byte>, position: int) returns(match_: bool, offset: int, size: int)
+        requires 0 < position < buffer.Length
+        ensures 1 <= offset < SEARCH.1
+        ensures match_ ==> 0 < size < WINDOW.1
+        ensures position - offset + size <= buffer.Length
+        ensures 0 <= position - offset
+        ensures position + size < buffer.Length
+        ensures match_ ==> buffer[position..position+size] == buffer[position-offset..position-offset+size]
     {
-        var offset := 1;
-
+        offset := 1;
         size := 0;
-        match_ := true;
-        bestOffsetSoFar := 1;
 
-        var floor := if position - SEARCH.1 >= 0 then position-SEARCH.1 else 0;
-
-        while floor <= position - offset as int
-            decreases position - offset as int - floor
+        var cOffset := 1;
+        while cOffset < SEARCH.1 && 0 <= position - cOffset
+            decreases SEARCH.1 - cOffset
+            invariant size < WINDOW.1
+            invariant offset < SEARCH.1
+            invariant 0 <= position - offset
+            invariant position + size < buffer.Length
+            invariant buffer[position..position+size] == buffer[position-offset..position-offset+size]
         {
-            if(buffer[position] == buffer[position-offset as int]) {
-                var ceiling := if position + LOOKAHEAD.1 < buffer.Length then position + LOOKAHEAD.1 else buffer.Length-1;
-                var newSize := MatchSize(buffer, position - offset as int, position, ceiling);
-                bestOffsetSoFar := if size >= newSize then bestOffsetSoFar else offset;
-                size := if size >= newSize then size else newSize;
+            if(buffer[position] == buffer[position-cOffset]) {
+                var mlength := MatchLength(buffer, position - cOffset, position);
+                offset := if size >= mlength then offset else cOffset;
+                size := if size >= mlength then size else mlength;
             }
-            offset := offset + 1;
+            cOffset := cOffset + 1;
         }
 
-        match_ := !(bestOffsetSoFar == 1 && size == 0);
+        match_ := !(size == 0);
     }
 
-    static method Queue(queue: array<bit>, queuePointer: int, toQueue: int, bitsToQueue: int) returns(nPointer: int)
-        requires 0 <= queuePointer < queue.Length
-        requires 1 <= bitsToQueue <= 32
-        requires 1 <= queuePointer + bitsToQueue <= queue.Length
-        modifies queue
+    static method BitsToByte(bits: seq<bit>) returns(b: byte)
+        requires 1 <= |bits| <= BYTE.0
+        //ensures ByteToBits() == bits
     {
-        var iter := 1;
-        var nb := toQueue;
-        nPointer := queuePointer;
+        b := 0;
 
-        while iter <= bitsToQueue && nPointer < queue.Length
-            decreases bitsToQueue - iter
-            decreases queue.Length - nPointer
+        var iter := BYTE.0-1;
+        var exp2: byte := 1;
+
+        while |bits| <= iter
+            decreases iter - |bits|
         {
-            queue[nPointer+bitsToQueue-iter] := if nb%2 == 1 then 1 as bit else 0 as bit;
-            nb := nb/2;
+            if exp2 as int *2 >= BYTE.1 {break;} // should never happen
+            exp2 := exp2*2;
+            iter := iter - 1;
+        }
+
+        while 0 <= iter < |bits|
+            decreases iter - 0
+        {
+            if b as int + exp2 as int >= BYTE.1 {break;} // should never happen
+            b := b + if bits[iter] == 1 then exp2 else 0;
+
+            if exp2 as int *2 >= BYTE.1 {break;} // should never happen
+            exp2 := exp2*2;
+            iter := iter - 1;
+        }
+    }
+
+    static method BitsToBytes(bits: seq<bit>) returns(bytes: seq<byte>)
+        ensures 1 <= |bits| ==> |bits|/BYTE.0 == |bytes| || |bits|/BYTE.0 + 1 == |bytes|
+        //ensures BytesToBits() == bits
+    {
+        bytes := [];
+        if |bits| == 0 {return;}
+
+        var nbyte;
+        var iter := 0;
+        var xpto := bits;
+        while iter + BYTE.0 < |bits|
+            decreases |bits| - iter
+            invariant 0 <= iter < |bits|
+            invariant iter/BYTE.0 == |bytes|
+        {
+            nbyte := BitsToByte(bits[iter..iter+BYTE.0]);
+            bytes := bytes + [nbyte];
+            iter := iter + BYTE.0;
+        }
+        nbyte := BitsToByte(bits[iter..]);
+        bytes := bytes + [nbyte];
+    }
+    
+    static method ByteToBits(b: byte, bitsToConvert: int) returns(bits: seq<bit>)
+        requires 0 <= bitsToConvert <= BYTE.0
+        ensures |bits| == bitsToConvert
+        //ensures BitsToByte() == b
+    {
+        bits := [];
+
+        var iter := 0;
+        var exp2 := b;
+
+        while iter < bitsToConvert
+            decreases bitsToConvert - iter
+            invariant |bits| == iter
+        {
+            bits := (if exp2%2 == 0 then [0] else [1]) + bits;
+            
+            exp2 := exp2/2;
             iter := iter + 1;
         }
-        nPointer := nPointer + bitsToQueue;
+
+        bits := bits[0..bitsToConvert];
     }
 
-    static method Flush(to: array<byte>, toSize: int, queue: array<bit>, qpointer: int) returns(ntoSize: int, nqpointer: int)
-        requires 0 <= qpointer <= queue.Length
-        requires 0 <= toSize + qpointer / BYTE_SIZE <= to.Length
-        modifies to, queue;
-        //ensures nqpointer < BYTE_SIZE;
+    static method BytesToBits(bytes: seq<byte>, bitsToConvert: int) returns(bits: seq<bit>)
+        requires (|bytes|-1) * BYTE.0 <= bitsToConvert <= |bytes| * BYTE.0
+        //ensures BitsToBytes() == b
     {
-        nqpointer := 0;
-        ntoSize := toSize;
+        bits := [];
+        if |bytes| == 0 { return; }
         
-        var toFlush := toSize + qpointer / BYTE_SIZE;
-        while ntoSize < toFlush && nqpointer < qpointer
-            decreases toFlush - ntoSize
+        var nbits;
+        var iter := 0;
+        var toConvert := 0;
+        
+        while iter < |bytes| - 1
+            decreases |bytes| - iter
+            invariant iter < |bytes|
+            invariant iter*BYTE.0 == toConvert
         {
-            var exp: byte := 128;
-            var i := 0;
-            while i < BYTE_SIZE
-                decreases BYTE_SIZE - i
-            {
-                to[ntoSize] := to[ntoSize] + if queue[nqpointer] == 0 then 0 else exp;
-                i := i + 1;
-                exp := exp/2;
-                nqpointer := nqpointer + 1;
-            }
-
-            ntoSize := ntoSize + 1;
+            toConvert := toConvert + BYTE.0;
+            nbits := ByteToBits(bytes[iter], BYTE.0);
+            bits := bits + nbits;
+            iter := iter + 1;
         }
 
-        var i := 0;
-        while i + nqpointer < qpointer
-            decreases qpointer - i
-        {
-            queue[i] := queue[nqpointer+i];
-            i := i + 1;
-        }
-
-        nqpointer := i;
+        nbits := ByteToBits(bytes[iter], bitsToConvert-toConvert);
+        bits := bits + nbits;
     }
 
-    static method Encode(from: array<byte>) returns(to: array<byte>, toSize: int)
+    static method Encode(from: array<byte>) returns(to: seq<byte>)
     {
-        toSize := 0;
-        to := new byte[from.Length * 2];
-       
-        var pointer: int := 0;
+        to := [];
+        if from.Length == 0 {return;}
 
-        var qpointer: int := 0;
-        var queue := new bit[128];
-        var totalBits := 0;
+        var bits := [];
+        var pointer: int := 0;
+        
+        bits := bits + [BITFLAG_WORD];
+        var word_bits := ByteToBits(from[pointer], BYTE.0); assert BYTE.0 <= 8;
+        bits := bits + word_bits;
+        pointer := pointer + 1;
+
         while pointer < from.Length
             decreases from.Length - pointer
         {
-            var match_, offset, len := FindBiguestMatch(from, pointer);
-    
-            if match_ {
-                //<1,offset,len,word>
-                if !(0 <= qpointer < queue.Length) {break;}
-                queue[qpointer] := BITFLAG_PAIR;
-                qpointer := qpointer + 1;
-                
-                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
-                qpointer := Queue(queue, qpointer, offset as int, SEARCH.0);
+            var match_, offset, len := LongestMatch(from, pointer);
 
-                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
-                qpointer := Queue(queue, qpointer, len as int, WINDOW.0);
+            if match_ && len*(SEARCH.0 + WINDOW.0 + BYTE.0) >= len*(BYTE.0+1)  {
+                //<1,offset,len,word>
+                print("1");
+                bits := bits + [BITFLAG_PAIR];
+                var offset_bits := ByteToBits(offset as byte, SEARCH.0); assert SEARCH.0 <= 8;
+                bits := bits + offset_bits;
+                print("2-");
+                print(len);
+                assert 1 <= len <= 256;
+                var len_bits := ByteToBits((len as int -1) as byte, SEARCH.0); assert WINDOW.0 <= 8;
+                bits := bits + len_bits;
+                print("-3");
+                var word_bits := ByteToBits(from[pointer], BYTE.0); assert BYTE.0 <= 8;
+                bits := bits + word_bits;
+                print("4\n");
                 pointer := pointer + len;
-                
-                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
-                qpointer := Queue(queue, qpointer, from[pointer] as int, BYTE_SIZE);
-                pointer := pointer + 1;
             } else {
                 //<0,word>
-                if !(0 <= qpointer < queue.Length) {break;}
-                queue[qpointer] := BITFLAG_WORD;
-                qpointer := qpointer + 1;
-                if !(0 <= qpointer < queue.Length) || !(1 <= qpointer + BYTE_SIZE <= queue.Length) || !(0 <= pointer < from.Length) {break;}
-                qpointer := Queue(queue, qpointer, from[pointer] as int, BYTE_SIZE);
+
+                bits := bits + [BITFLAG_WORD];
+                var word_bits := ByteToBits(from[pointer], BYTE.0); assert BYTE.0 <= 8;
+                bits := bits + word_bits;
                 pointer := pointer + 1;
             }
-            if !(0 <= qpointer <= queue.Length) || !(0 <= toSize + qpointer / BYTE_SIZE <= to.Length) {break;}
-            toSize, qpointer := Flush(to, toSize, queue, qpointer);
         }
-        if qpointer != 0 {
-            qpointer := Queue(queue, qpointer, 0, BYTE_SIZE);
-            toSize, qpointer := Flush(to, toSize, queue, qpointer);
-        }
+        
+        to := BitsToBytes(bits);
     }
 
-    static method GetByte(queue: array<bit>, qp: int, bitTo: int) returns(b: byte, nqp: int)
-        requires 1 <= bitTo <= 8
+    static method Decode(from: array<byte>) returns(to: seq<byte>)
     {
-        var i := 1;
-        var exp := 1;
-        while i <= bitTo
-            decreases bitTo - i
-        {
-            b := b + if queue[qp+bitTo-i] == 0 then 0 else exp;
-            exp := exp*2;
-            i := i + 1;
-        }
-        nqp := qp + bitTo;
-    }
-    static method Decode(from: array<byte>) returns(to: array<byte>, toSize: int)
-    {
-        to := new byte[from.Length * 16];
-        var pointer: int := 0;
-        var queue: array<bit> := new bit[64];
-        var queuePointer: int := 0;
-        var qp := 0;
-        toSize := 0;
+        to := [];
+        if from.Length == 0 { return; }
 
-        while true
-            //decreases from.Length - pointer
-        {
-            while queuePointer + BYTE_SIZE < queue.Length && pointer < from.Length
-                decreases from.Length - pointer
-            {
-                queuePointer := LZSS.Queue(queue, queuePointer, from[pointer] as int, BYTE_SIZE);
-                pointer := pointer + 1;
-            }
+        var bits := BytesToBits(from[..], from.Length*BYTE.0);
 
-            if queuePointer - qp < 8 {break;}
-            else if queue[qp] == 1 {
+        while |bits| >= 0
+            decreases |bits|
+        {
+            if |bits| < 8 { break; }
+            else if bits[0] == 1 {
                 //<1,offset,len,word>
-                qp := qp + 1;
+                bits := bits[1..];
+
                 var offset, len, word;
+                
+                offset := BitsToByte(bits[0..SEARCH.0]);
+                bits := bits[SEARCH.0..];
+                len := BitsToByte(bits[0..WINDOW.0]);
+                bits := bits[WINDOW.0..];
+                word := BitsToByte(bits[0..BYTE.0]);
+                bits := bits[BYTE.0..];
 
-                if toSize == 8170 {
-                    //var a1, a2 := GetByte(queue, qp-8, 8);
-                    var j := qp;
-                    while j < queue.Length {
-                        print(queue[j]);
-                        j := j + 1;
-                    }
-                    print("\n");
-                    print(qp);
-                    print("-");
-                    print(queuePointer);
-                    print("-");
-                    print(offset);
-                    print("-");
-                    print(len);
-                    print("-");
-                    print(word);
-                    print("\n");
-                }//000000010000000000000001111
-
-                offset, qp := GetByte(queue, qp, SEARCH.0);
-                len, qp := GetByte(queue, qp, WINDOW.0);
-                word, qp := GetByte(queue, qp, BYTE_SIZE);
-
-                if toSize == 8170 {
-                    //var a1, a2 := GetByte(queue, qp-8, 8);
-                    print(offset);
-                    print("-");
-                    print(len);
-                    print("-");
-                    print(word);
-                    print("\n");
-                }
-
-                var i: int := 0;
-                while i < len as int
+                var i := 0;
+                while i <= len as int //&& 0 <= |to| - offset as int + i < |to|
                     decreases len as int - i
                 {
-                    to[toSize + i] := to[toSize - offset as int + i];
+                    to := to + [to[|to| - offset as int + i]];
                     i := i + 1;
                 }
 
-                toSize := toSize + len as int;
-                to[toSize] := word;
-                toSize := toSize + 1;
+                to := to + [word];
             } else {
                 //<0,word>
-                qp := qp + 1;
+                bits := bits[1..];
+                
                 var word;
-                word, qp := GetByte(queue, qp, BYTE_SIZE);
-                to[toSize] := word;
-                toSize := toSize + 1;
+                word := BitsToByte(bits[0..BYTE.0]);
+                bits := bits[BYTE.0..];
+                to := to + [word];
             }
-
-            var i := 0;
-            while qp + i < queuePointer <= queue.Length
-                decreases queuePointer - i
-            {
-                queue[i] := queue[qp+i];
-                i := i + 1;
-            }
-            queuePointer := i;
-            qp := 0;
-            
-            if qp == queuePointer {break;}
         }
     }
 }
